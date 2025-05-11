@@ -1,3 +1,4 @@
+
 import { HrfData, Player, Team } from "../types";
 
 const parseHrfFile = (fileContent: string): HrfData | null => {
@@ -10,59 +11,164 @@ const parseHrfFile = (fileContent: string): HrfData | null => {
       team: { id: "", name: "", players: [] },
       players: []
     };
+    
+    // Map of player skills by ID for later association
+    const playerSkills: Record<string, Record<string, number>> = {};
 
     // Split the file into lines
     const lines = fileContent.split("\n");
     console.log(`File contains ${lines.length} lines`);
+
+    // Log the beginning of the file for debugging
+    console.log("First few lines of file:", lines.slice(0, 10).join("\n"));
 
     // Process each line
     for (const line of lines) {
       // Skip empty lines
       if (!line.trim()) continue;
       
-      if (line.includes("[HT]")) {
+      // Strip BOM and other potential control characters
+      const cleanLine = line.replace(/^\ufeff/, "").trim();
+      
+      if (cleanLine.includes("[HT]")) {
         // HRF version - more flexible matching
-        data.version = line.substring(line.indexOf("[HT]") + 4).trim();
+        data.version = cleanLine.substring(cleanLine.indexOf("[HT]") + 4).trim();
         console.log(`Found HRF version: ${data.version}`);
-      } else if (line.includes("[club]")) {
+      } 
+      else if (cleanLine.includes("[club]")) {
         // Team data - more flexible matching
-        const clubPart = line.substring(line.indexOf("[club]"));
+        const clubPart = cleanLine.substring(cleanLine.indexOf("[club]"));
         const clubData = clubPart.split(";");
         if (clubData.length >= 2) {
           data.team.id = clubData[0].replace("[club]", "").trim();
           data.team.name = clubData[1].trim();
           console.log(`Found team: ${data.team.name} (ID: ${data.team.id})`);
         }
-      } else if (line.includes("[player]")) {
+      } 
+      else if (cleanLine.includes("[player]")) {
         // Player data - more flexible matching
-        const playerPart = line.substring(line.indexOf("[player]"));
+        const playerPart = cleanLine.substring(cleanLine.indexOf("[player]"));
         const playerData = playerPart.split(";");
+        
+        // Log the raw player data for debugging
+        console.log(`Raw player data: ${playerData.join("|")}`);
+        
         if (playerData.length >= 10) {
+          const playerId = playerData[0].replace("[player]", "").trim();
+          const playerName = playerData[1].trim();
+          
           const player: Player = {
-            id: playerData[0].replace("[player]", "").trim(),
-            name: playerData[1].trim(),
+            id: playerId,
+            name: playerName,
             skills: {}
           };
 
-          // Extract skills - add fallbacks and more careful parsing
+          // Try to find skills in standard positions
+          // In real HRF format, player skills are typically in specific columns
+          // This is a more flexible approach that tries multiple positions
           try {
-            // Only add skills if they're valid numbers
-            const shootingValue = parseInt(playerData[5]);
-            if (!isNaN(shootingValue)) player.skills.shooting = shootingValue;
+            // Basic mapping of expected skill positions (these may vary by HRF format version)
+            // Careful parsing to extract only valid numbers
+            const potentialPositions = {
+              shooting: [5, 14, 16, 17], // Try multiple positions
+              setPieces: [8, 19, 20],
+              keeper: [9, 12, 13]
+            };
             
-            const setPiecesValue = parseInt(playerData[8]);
-            if (!isNaN(setPiecesValue)) player.skills.setPieces = setPiecesValue;
+            // Try each potential position for each skill
+            for (const [skill, positions] of Object.entries(potentialPositions)) {
+              for (const pos of positions) {
+                if (playerData[pos]) {
+                  const value = parseInt(playerData[pos].trim());
+                  if (!isNaN(value) && value > 0) {
+                    player.skills[skill as keyof typeof player.skills] = value;
+                    break; // Found a valid value, stop looking
+                  }
+                }
+              }
+            }
             
-            const keeperValue = parseInt(playerData[9]);
-            if (!isNaN(keeperValue)) player.skills.keeper = keeperValue;
+            // If still no skills found, try scanning the entire line for skill indicators
+            if (Object.keys(player.skills).length === 0) {
+              playerData.forEach((field, index) => {
+                // Look for fields that might contain skill descriptions
+                if (field.toLowerCase().includes("scoring") || field.toLowerCase().includes("shooting")) {
+                  const nextField = playerData[index + 1];
+                  if (nextField) {
+                    const value = parseInt(nextField.trim());
+                    if (!isNaN(value)) player.skills.shooting = value;
+                  }
+                }
+                if (field.toLowerCase().includes("set pieces")) {
+                  const nextField = playerData[index + 1];
+                  if (nextField) {
+                    const value = parseInt(nextField.trim());
+                    if (!isNaN(value)) player.skills.setPieces = value;
+                  }
+                }
+                if (field.toLowerCase().includes("keeper")) {
+                  const nextField = playerData[index + 1];
+                  if (nextField) {
+                    const value = parseInt(nextField.trim());
+                    if (!isNaN(value)) player.skills.keeper = value;
+                  }
+                }
+              });
+            }
+            
+            // If we still have no skills after all attempts, use fallback values
+            if (Object.keys(player.skills).length === 0) {
+              console.warn(`No skills found for player ${playerName}, using defaults`);
+              player.skills = { shooting: 5, setPieces: 5, keeper: 5 };
+            }
           } catch (e) {
-            console.warn("Error parsing player skills, using defaults");
+            console.warn(`Error parsing player skills for ${playerName}, using defaults:`, e);
             player.skills = { shooting: 5, setPieces: 5, keeper: 5 };
           }
 
+          // Store the player
           data.players.push(player);
-          console.log(`Found player: ${player.name}`);
+          console.log(`Found player: ${player.name} with skills:`, player.skills);
         }
+      }
+      // Try to detect separate skill sections that appear in some HRF formats
+      else if (cleanLine.includes("[skill]")) {
+        try {
+          const skillPart = cleanLine.substring(cleanLine.indexOf("[skill]"));
+          const skillData = skillPart.split(";");
+          if (skillData.length >= 3) {
+            const playerId = skillData[0].replace("[skill]", "").trim();
+            const skillType = skillData[1].toLowerCase().trim();
+            const skillValue = parseInt(skillData[2].trim());
+            
+            if (!isNaN(skillValue)) {
+              if (!playerSkills[playerId]) {
+                playerSkills[playerId] = {};
+              }
+              
+              // Map skill names to our format
+              if (skillType.includes("scoring") || skillType.includes("shooting")) {
+                playerSkills[playerId].shooting = skillValue;
+              } else if (skillType.includes("set pieces")) {
+                playerSkills[playerId].setPieces = skillValue;
+              } else if (skillType.includes("keeper")) {
+                playerSkills[playerId].keeper = skillValue;
+              }
+              
+              console.log(`Found separate skill for player ${playerId}: ${skillType} = ${skillValue}`);
+            }
+          }
+        } catch (e) {
+          console.warn("Error parsing separate skill section:", e);
+        }
+      }
+    }
+    
+    // Merge any separately found skills with player records
+    for (const player of data.players) {
+      if (playerSkills[player.id]) {
+        player.skills = { ...player.skills, ...playerSkills[player.id] };
+        console.log(`Updated player ${player.name} with additional skills:`, playerSkills[player.id]);
       }
     }
 
@@ -72,6 +178,43 @@ const parseHrfFile = (fileContent: string): HrfData | null => {
     // Verify we have basic required data
     if (!data.team.name || data.players.length === 0) {
       console.error("Parsed HRF file is missing critical data (team name or players)");
+      
+      // Try fallback method for older HRF format
+      if (data.players.length === 0) {
+        console.log("Attempting fallback parsing for older HRF format...");
+        // Some older HRF formats use different tags
+        for (const line of lines) {
+          if (line.includes("teamId=")) {
+            data.team.id = line.split("=")[1]?.trim() || "";
+          } else if (line.includes("teamName=")) {
+            data.team.name = line.split("=")[1]?.trim() || "";
+          } else if (line.includes("playerName=") && line.includes("id=")) {
+            try {
+              // Extract player info from line
+              const idMatch = /id=(\d+)/.exec(line);
+              const nameMatch = /playerName=([^;]+)/.exec(line);
+              
+              if (idMatch && nameMatch) {
+                const player: Player = {
+                  id: idMatch[1],
+                  name: nameMatch[1].trim(),
+                  skills: { shooting: 5, setPieces: 5, keeper: 5 } // Default skills
+                };
+                data.players.push(player);
+                data.team.players.push(player);
+              }
+            } catch (e) {
+              console.warn("Error in fallback parsing:", e);
+            }
+          }
+        }
+        
+        if (data.players.length > 0) {
+          console.log(`Fallback parsing found ${data.players.length} players`);
+          return data;
+        }
+      }
+      
       return null;
     }
     
