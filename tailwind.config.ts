@@ -1,3 +1,4 @@
+
 import type { Config } from "tailwindcss";
 
 export default {
@@ -61,7 +62,15 @@ export default {
 					'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
 					border: 'hsl(var(--sidebar-border))',
 					ring: 'hsl(var(--sidebar-ring))'
-				}
+				},
+                // Custom colors for our penalty game
+                field: '#1a472a',
+                marking: '#ffffff',
+                swedish: {
+                    blue: '#005293',
+                    yellow: '#fecc00',
+                },
+                wood: '#d2b48c',
 			},
 			borderRadius: {
 				lg: 'var(--radius)',
@@ -84,11 +93,21 @@ export default {
 					to: {
 						height: '0'
 					}
-				}
+				},
+                'ball-kick': {
+                    '0%': { transform: 'scale(1) translate(0, 0)' },
+                    '100%': { transform: 'scale(0.8) translate(var(--kick-x), var(--kick-y))' }
+                },
+                'goalkeeper-dive': {
+                    '0%': { transform: 'translateX(0)' },
+                    '100%': { transform: 'translateX(var(--dive-direction))' }
+                }
 			},
 			animation: {
 				'accordion-down': 'accordion-down 0.2s ease-out',
-				'accordion-up': 'accordion-up 0.2s ease-out'
+				'accordion-up': 'accordion-up 0.2s ease-out',
+                'ball-kick': 'ball-kick 0.5s forwards ease-out',
+                'goalkeeper-dive': 'goalkeeper-dive 0.4s forwards ease-out'
 			}
 		}
 	},
